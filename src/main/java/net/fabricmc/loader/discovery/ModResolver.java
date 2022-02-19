@@ -48,6 +48,9 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.zip.ZipError;
 
+import net.fabricmc.loader.api.metadata.*;
+import net.fabricmc.loader.metadata.*;
+import net.fabricmc.loader.util.version.StringVersion;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.jimfs.Configuration;
@@ -57,15 +60,9 @@ import com.google.common.jimfs.PathType;
 import net.fabricmc.loader.FabricLoaderImpl;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.Version;
-import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.game.GameProvider.BuiltinMod;
 import net.fabricmc.loader.launch.common.FabricLauncherBase;
 import net.fabricmc.loader.lib.gson.MalformedJsonException;
-import net.fabricmc.loader.metadata.BuiltinModMetadata;
-import net.fabricmc.loader.metadata.LoaderModMetadata;
-import net.fabricmc.loader.metadata.ModMetadataParser;
-import net.fabricmc.loader.metadata.NestedJarEntry;
-import net.fabricmc.loader.metadata.ParseMetadataException;
 import net.fabricmc.loader.util.FileSystemUtil;
 import net.fabricmc.loader.util.UrlConversionException;
 import net.fabricmc.loader.util.UrlUtil;
@@ -79,7 +76,7 @@ import net.fabricmc.loader.util.sat4j.specs.TimeoutException;
 
 public class ModResolver {
 	// nested JAR store
-	private static final FileSystem inMemoryFs = Jimfs.newFileSystem(
+	protected static final FileSystem inMemoryFs = Jimfs.newFileSystem(
 		"nestedJarStore",
 		Configuration.builder(PathType.unix())
 			.setRoots("/")
@@ -88,11 +85,11 @@ public class ModResolver {
 			.setSupportedFeatures(SECURE_DIRECTORY_STREAM, FILE_CHANNEL)
 			.build()
 	);
-	private static final Map<String, List<Path>> inMemoryCache = new ConcurrentHashMap<>();
-	private static final Pattern MOD_ID_PATTERN = Pattern.compile("[a-z][a-z0-9-_]{1,63}");
-	private static final Object launcherSyncObject = new Object();
+	protected static final Map<String, List<Path>> inMemoryCache = new ConcurrentHashMap<>();
+	protected static final Pattern MOD_ID_PATTERN = Pattern.compile("[a-z][a-z0-9-_]{1,63}");
+	protected static final Object launcherSyncObject = new Object();
 
-	private final List<ModCandidateFinder> candidateFinders = new ArrayList<>();
+	protected final List<ModCandidateFinder> candidateFinders = new ArrayList<>();
 
 	public ModResolver() {
 	}
@@ -273,7 +270,7 @@ public class ModResolver {
 		// verify result: all mandatory mods
 		Set<String> missingMods = new HashSet<>();
 		for (String m : mandatoryMods) {
-			if (!result.keySet().contains(m)) {
+			if (!result.containsKey(m)) {
 				missingMods.add(m);
 			}
 		}
@@ -520,7 +517,7 @@ public class ModResolver {
 	}
 
 	/** @param errorList The list of errors. The returned list of errors all need to be prefixed with "it " in order to make sense. */
-	private static boolean isModIdValid(String modId, List<String> errorList) {
+	protected static boolean isModIdValid(String modId, List<String> errorList) {
 		// A more useful error list for MOD_ID_PATTERN
 		if (modId.isEmpty()) {
 			errorList.add("is empty!");
@@ -567,11 +564,11 @@ public class ModResolver {
 
 	@SuppressWarnings("serial")
 	static class UrlProcessAction extends RecursiveAction {
-		private final FabricLoaderImpl loader;
-		private final Map<String, ModCandidateSet> candidatesById;
-		private final URL url;
-		private final int depth;
-		private final boolean requiresRemap;
+		protected final FabricLoaderImpl loader;
+		protected final Map<String, ModCandidateSet> candidatesById;
+		protected final URL url;
+		protected final int depth;
+		protected final boolean requiresRemap;
 
 		UrlProcessAction(FabricLoaderImpl loader, Map<String, ModCandidateSet> candidatesById, URL url, int depth, boolean requiresRemap) {
 			this.loader = loader;
@@ -817,7 +814,7 @@ public class ModResolver {
 		return result;
 	}
 
-	private void addBuiltinMod(ConcurrentMap<String, ModCandidateSet> candidatesById, BuiltinMod mod) {
+	protected void addBuiltinMod(ConcurrentMap<String, ModCandidateSet> candidatesById, BuiltinMod mod) {
 		candidatesById.computeIfAbsent(mod.metadata.getId(), ModCandidateSet::new)
 				.add(new ModCandidate(new BuiltinMetadataWrapper(mod.metadata), mod.url, 0, false));
 	}

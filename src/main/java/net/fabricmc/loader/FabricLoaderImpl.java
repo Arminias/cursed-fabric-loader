@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import net.fabricmc.loader.discovery.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.objectweb.asm.Opcodes;
@@ -43,12 +44,6 @@ import net.fabricmc.loader.api.LanguageAdapter;
 import net.fabricmc.loader.api.MappingResolver;
 import net.fabricmc.loader.api.SemanticVersion;
 import net.fabricmc.loader.api.entrypoint.EntrypointContainer;
-import net.fabricmc.loader.discovery.ClasspathModCandidateFinder;
-import net.fabricmc.loader.discovery.DirectoryModCandidateFinder;
-import net.fabricmc.loader.discovery.ModCandidate;
-import net.fabricmc.loader.discovery.ModResolutionException;
-import net.fabricmc.loader.discovery.ModResolver;
-import net.fabricmc.loader.discovery.RuntimeModRemapper;
 import net.fabricmc.loader.game.GameProvider;
 import net.fabricmc.loader.gui.FabricGuiEntry;
 import net.fabricmc.loader.launch.common.FabricLauncherBase;
@@ -70,7 +65,8 @@ public class FabricLoaderImpl implements FabricLoader {
 	protected static Logger LOGGER = LogManager.getFormatterLogger("Fabric|Loader");
 
 	protected final Map<String, ModContainer> modMap = new HashMap<>();
-	protected List<ModContainer> mods = new ArrayList<>();
+	public List<ModContainer> mods = new ArrayList<>();
+	public List<ModContainer> coremods = new ArrayList<>();
 
 	private final Map<String, LanguageAdapter> adapterMap = new HashMap<>();
 	private final EntrypointStorage entrypointStorage = new EntrypointStorage();
@@ -166,6 +162,11 @@ public class FabricLoaderImpl implements FabricLoader {
 		return getGameDir().resolve("mods");
 	}
 
+	public Path getCoremodsDir() {
+		LOGGER.info(getGameDir().toString());
+		return getGameDir().resolve("coremods");
+	}
+
 	@Deprecated
 	public File getModsDirectory() {
 		return getModsDir().toFile();
@@ -182,7 +183,61 @@ public class FabricLoaderImpl implements FabricLoader {
 		}
 	}
 
-	private void setup() throws ModResolutionException {
+	public void loadCore() {
+		if (frozen) throw new IllegalStateException("Frozen - cannot load additional coremods!");
+
+		try {
+			setupCore();
+		} catch (ModResolutionException exception) {
+			FabricGuiEntry.displayCriticalError(exception, true);
+		}
+	}
+
+	private void setupCore() throws ModResolutionException {
+		CoremodResolver coreResolver = new CoremodResolver();
+		coreResolver.addCandidateFinder(new DirectoryModCandidateFinder(getCoremodsDir(), isDevelopmentEnvironment()));
+		Map<String, ModCandidate> coreCandidateMap = coreResolver.resolve(this);
+
+		String modText;
+
+		switch (coreCandidateMap.values().size()) {
+			case 0:
+				modText = "Loading %d mods";
+				break;
+			case 1:
+				modText = "Loading %d mod: %s";
+				break;
+			default:
+				modText = "Loading %d mods: %s";
+				break;
+		}
+		LOGGER.info("[" + getClass().getSimpleName() + "] " + modText, coreCandidateMap.values().size(), coreCandidateMap.values().stream()
+				.map(info -> String.format("%s@%s", info.getInfo().getId(), info.getInfo().getVersion().getFriendlyString()))
+				.collect(Collectors.joining(", ")));
+
+		if (DependencyOverrides.INSTANCE.getDependencyOverrides().size() > 0) {
+			LOGGER.info(String.format("Dependencies overridden for \"%s\"", String.join(", ", DependencyOverrides.INSTANCE.getDependencyOverrides().keySet())));
+		}
+
+		boolean runtimeModRemapping = isDevelopmentEnvironment();
+
+		if (runtimeModRemapping && System.getProperty(SystemProperties.REMAP_CLASSPATH_FILE) == null) {
+			LOGGER.warn("Runtime mod remapping disabled due to no fabric.remapClasspathFile being specified. You may need to update loom.");
+			runtimeModRemapping = false;
+		}
+
+		if (runtimeModRemapping) {
+			for (ModCandidate candidate : RuntimeModRemapper.remap(coreCandidateMap.values(), ModResolver.getInMemoryFs())) {
+				addCoremod(candidate);
+			}
+		} else {
+			for (ModCandidate candidate : coreCandidateMap.values()) {
+				addCoremod(candidate);
+			}
+		}
+	}
+
+	private void setup () throws ModResolutionException {
 		ModResolver resolver = new ModResolver();
 		resolver.addCandidateFinder(new ClasspathModCandidateFinder());
 		resolver.addCandidateFinder(new DirectoryModCandidateFinder(getModsDir(), isDevelopmentEnvironment()));
@@ -202,8 +257,8 @@ public class FabricLoaderImpl implements FabricLoader {
 		}
 
 		LOGGER.info("[" + getClass().getSimpleName() + "] " + modText, candidateMap.values().size(), candidateMap.values().stream()
-			.map(info -> String.format("%s@%s", info.getInfo().getId(), info.getInfo().getVersion().getFriendlyString()))
-			.collect(Collectors.joining(", ")));
+				.map(info -> String.format("%s@%s", info.getInfo().getId(), info.getInfo().getVersion().getFriendlyString()))
+				.collect(Collectors.joining(", ")));
 
 		if (DependencyOverrides.INSTANCE.getDependencyOverrides().size() > 0) {
 			LOGGER.info(String.format("Dependencies overridden for \"%s\"", String.join(", ", DependencyOverrides.INSTANCE.getDependencyOverrides().keySet())));
@@ -240,6 +295,7 @@ public class FabricLoaderImpl implements FabricLoader {
 		setupLanguageAdapters();
 		setupMods();
 	}
+
 
 	public boolean hasEntrypoints(String key) {
 		return entrypointStorage.hasEntrypoints(key);
@@ -301,6 +357,29 @@ public class FabricLoaderImpl implements FabricLoader {
 
 		ModContainer container = new ModContainer(info, originUrl);
 		mods.add(container);
+		modMap.put(info.getId(), container);
+		for (String provides : info.getProvides()) {
+			if(modMap.containsKey(provides)) {
+				throw new ModResolutionException("Duplicate provided alias: " + provides + "! (" + modMap.get(info.getId()).getOriginUrl().getFile() + ", " + originUrl.getFile() + ")");
+			}
+			modMap.put(provides, container);
+		}
+	}
+
+	protected void addCoremod(ModCandidate candidate) throws ModResolutionException {
+		LoaderModMetadata info = candidate.getInfo();
+		URL originUrl = candidate.getOriginUrl();
+
+		if (modMap.containsKey(info.getId())) {
+			throw new ModResolutionException("Duplicate mod ID: " + info.getId() + "! (" + modMap.get(info.getId()).getOriginUrl().getFile() + ", " + originUrl.getFile() + ")");
+		}
+
+		if (!info.loadsInEnvironment(getEnvironmentType())) {
+			return;
+		}
+		ModContainer container = new ModContainer(info, originUrl);
+		mods.add(container);
+		coremods.add(container);
 		modMap.put(info.getId(), container);
 		for (String provides : info.getProvides()) {
 			if(modMap.containsKey(provides)) {

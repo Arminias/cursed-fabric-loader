@@ -261,7 +261,7 @@ build.dependsOn javadocJar
 license {
 	header file("HEADER")
 	include '**/*.java'
-
+	exclude '**/CoremodResolver.java'
 	// Exclude gson since it is google's code, we just modify and bundle it
 	exclude '**/lib/gson/*.java'
 	exclude '**/io/github/minecraftcursedlegacy/**'

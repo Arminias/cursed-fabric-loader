@@ -16,24 +16,9 @@
 
 package net.fabricmc.loader.launch.knot;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
-import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
-
-import org.spongepowered.asm.launch.MixinBootstrap;
-
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.FabricLoaderImpl;
+import net.fabricmc.loader.ModContainer;
 import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
 import net.fabricmc.loader.entrypoint.minecraft.hooks.EntrypointUtils;
 import net.fabricmc.loader.game.GameProvider;
@@ -43,6 +28,19 @@ import net.fabricmc.loader.launch.common.FabricMixinBootstrap;
 import net.fabricmc.loader.util.SystemProperties;
 import net.fabricmc.loader.util.UrlConversionException;
 import net.fabricmc.loader.util.UrlUtil;
+import net.fabricmc.loader.util.mappings.TinyRemapperMappingsHelper;
+import net.fabricmc.tinyremapper.OutputConsumerPath;
+import net.fabricmc.tinyremapper.TinyRemapper;
+import org.objectweb.asm.commons.Remapper;
+import org.spongepowered.asm.launch.MixinBootstrap;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public final class Knot extends FabricLauncherBase {
 	protected Map<String, Object> properties = new HashMap<>();
@@ -122,14 +120,141 @@ public final class Knot extends FabricLauncherBase {
 			}
 		}
 
+		FabricLoaderImpl loader = FabricLoaderImpl.getInstance();
+		loader.setGameProvider(provider);
+		loader.loadCore();
+		for (Path path : provider.getGameContextJars()) {
+			for (ModContainer m : loader.coremods) {
+				String sidedOrigin = getEnvironmentType().name().toLowerCase(Locale.ENGLISH);
+				TinyRemapperWithOverwrites remapper = new TinyRemapperWithOverwrites(TinyRemapper.newRemapper()
+						.withMappings(TinyRemapperMappingsHelper.create(
+								getMappingConfiguration().getMappings(), getMappingConfiguration().getMappings().getMetadata().getNamespaces().contains(sidedOrigin)
+										? sidedOrigin : "official", getMappingConfiguration().getTargetNamespace())
+						)
+						.rebuildSourceFilenames(true)
+						.fixPackageAccess(!isDevelopment()).extraRemapper(new Remapper() {
+							/**
+							 * Maps the internal name of a class to its new name. The default implementation of this method
+							 * returns the given name, unchanged. Subclasses can override.
+							 *
+							 * @param internalName the internal name of a class.
+							 * @return the new internal name.
+							 */
+							@Override
+							public String map(String internalName) {
+								if (internalName.contains("/"))
+									return internalName.replace("net/minecraft/src/", "net/minecraft/");
+								else {
+									return "net/minecraft/" + internalName;
+								}
+							}
+						})
+						.build()
+				);
+				try {
+					LOGGER.info("Loading coremod... " + path.toString() + ", " + UrlUtil.asPath(m.getOriginUrl()).toAbsolutePath());
+				} catch (UrlConversionException e) {
+					e.printStackTrace();
+				}
+				String versionedId = provider.getNormalizedGameVersion().isEmpty() ? provider.getGameId() : String.format("%s-%s", provider.getGameId(), provider.getNormalizedGameVersion());
+				Path jarPath = provider.getLaunchDirectory().resolve(".fabric").resolve("remappedJars").resolve(versionedId).resolve(getMappingConfiguration().getTargetNamespace() + "-" + path.getFileName());
+				try (OutputConsumerPath o = new OutputConsumerPath.Builder(jarPath)
+						// force jar despite the .tmp extension
+						.assumeArchive(true)
+						// don't accept class names from a blacklist of dependencies that Fabric itself utilizes
+						// TODO: really could use a better solution, as always...
+						.filter(clsName -> !clsName.startsWith("com/google/common/")
+								&& !clsName.startsWith("com/google/gson/")
+								&& !clsName.startsWith("com/google/thirdparty/")
+								&& !clsName.startsWith("org/apache/logging/log4j/"))
+						.build()) {
+					remapper.readInputs(UrlUtil.asPath(m.getOriginUrl()));
+					remapper.INSTANCE.apply(o);
+				} catch (IOException | UrlConversionException e) {
+					throw new RuntimeException("Failed to remap '" + m.getOriginUrl() + "'!", e);
+				} finally {
+					remapper.INSTANCE.finish();
+				}
+				try {
+					propose(UrlUtil.asUrl(jarPath));
+				} catch (UrlConversionException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+		LOGGER.info("Coremod loading done!");
+
 		// Locate entrypoints before switching class loaders
 		provider.getEntrypointTransformer().locateEntrypoints(this);
 
 		Thread.currentThread().setContextClassLoader(cl);
 
-		FabricLoaderImpl loader = FabricLoaderImpl.getInstance();
-		loader.setGameProvider(provider);
 		loader.load();
+		for (ModContainer m : loader.mods) {
+			String[] tmp = m.getOriginUrl().toExternalForm().split("/");
+			if (!m.getInfo().getEntrypointKeys().isEmpty() && tmp[tmp.length-2].equals("mods")) {
+				String sidedOrigin = getEnvironmentType().name().toLowerCase(Locale.ENGLISH);
+				TinyRemapperWithOverwrites remapper = new TinyRemapperWithOverwrites(TinyRemapper.newRemapper()
+						.withMappings(TinyRemapperMappingsHelper.create(
+								getMappingConfiguration().getMappings(), getMappingConfiguration().getMappings().getMetadata().getNamespaces().contains(sidedOrigin)
+										? sidedOrigin : "official", getMappingConfiguration().getTargetNamespace())
+						)
+						.rebuildSourceFilenames(true)
+						.fixPackageAccess(!isDevelopment()).extraRemapper(new Remapper() {
+							/**
+							 * Maps the internal name of a class to its new name. The default implementation of this method
+							 * returns the given name, unchanged. Subclasses can override.
+							 *
+							 * @param internalName the internal name of a class.
+							 * @return the new internal name.
+							 */
+							@Override
+							public String map(String internalName) {
+								if (internalName.contains("/"))
+									return internalName.replace("net/minecraft/src/", "net/minecraft/");
+								else {
+									return "net/minecraft/" + internalName;
+								}
+							}
+						})
+						.build()
+				);
+				String versionedId = provider.getNormalizedGameVersion().isEmpty() ? provider.getGameId() : String.format("%s-%s", provider.getGameId(), provider.getNormalizedGameVersion());
+				Path jarPath = null;
+				try {
+					jarPath = provider.getLaunchDirectory().resolve(".fabric").resolve("remappedModJars").
+							resolve(versionedId).resolve(getMappingConfiguration().
+							getTargetNamespace() + "-" + UrlUtil.asPath(m.getOriginUrl()).getFileName());
+				} catch (UrlConversionException e) {
+					e.printStackTrace();
+				}
+				try (OutputConsumerPath o = new OutputConsumerPath.Builder(jarPath)
+						// force jar despite the .tmp extension
+						.assumeArchive(true)
+						// don't accept class names from a blacklist of dependencies that Fabric itself utilizes
+						// TODO: really could use a better solution, as always...
+						.filter(clsName -> !clsName.startsWith("com/google/common/")
+								&& !clsName.startsWith("com/google/gson/")
+								&& !clsName.startsWith("com/google/thirdparty/")
+								&& !clsName.startsWith("org/apache/logging/log4j/"))
+						.build()) {
+					remapper.readInputs(UrlUtil.asPath(m.getOriginUrl()));
+					remapper.INSTANCE.apply(o);
+				} catch (IOException | UrlConversionException e) {
+					throw new RuntimeException("Failed to remap '" + m.getOriginUrl() + "'!", e);
+				} finally {
+					remapper.INSTANCE.finish();
+				}
+				try {
+					propose(UrlUtil.asUrl(jarPath));
+				} catch (UrlConversionException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+
 		loader.freeze();
 
 		loader.loadAccessWideners();
