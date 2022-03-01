@@ -17,10 +17,11 @@
 package net.fabricmc.loader.launch.common;
 
 import net.fabricmc.api.EnvType;
-import net.fabricmc.loader.util.mappings.TinyRemapperMappingsHelper;
+import net.fabricmc.loader.launch.knot.Knot;
+import net.fabricmc.loader.util.Arguments;
 import net.fabricmc.loader.util.UrlConversionException;
 import net.fabricmc.loader.util.UrlUtil;
-import net.fabricmc.loader.util.Arguments;
+import net.fabricmc.loader.util.mappings.TinyRemapperMappingsHelper;
 import net.fabricmc.mapping.tree.TinyTree;
 import net.fabricmc.tinyremapper.*;
 import org.apache.logging.log4j.LogManager;
@@ -28,7 +29,8 @@ import org.apache.logging.log4j.Logger;
 import org.objectweb.asm.commons.Remapper;
 import org.spongepowered.asm.mixin.MixinEnvironment;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -43,7 +45,6 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
 
@@ -317,11 +318,18 @@ public abstract class FabricLauncherBase implements FabricLauncher {
 								 */
 								@Override
 								public String map(String internalName) {
-									if (internalName.contains("/"))
-										return internalName.replace("net/minecraft/src/", "net/minecraft/");
-									else {
-										return "net/minecraft/" + internalName;
-									}
+									if (Knot.RELOCATE_SRC == 0)
+										if (internalName.contains("/")) {
+											return internalName.replace("net/minecraft/src/", "net/minecraft/");
+										}
+										else {
+											return "net/minecraft/" + internalName;
+										}
+									else if (Knot.RELOCATE_SRC == 1)
+										if (!internalName.contains("/")) {
+											return "net/minecraft/src/" + internalName;
+										}
+									return internalName;
 								}
 							})
 							.build()

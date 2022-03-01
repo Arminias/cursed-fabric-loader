@@ -43,6 +43,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public final class Knot extends FabricLauncherBase {
+	public static final int RELOCATE_SRC = 1;
 	protected Map<String, Object> properties = new HashMap<>();
 
 	private KnotClassLoaderInterface classLoader;
@@ -142,11 +143,18 @@ public final class Knot extends FabricLauncherBase {
 							 */
 							@Override
 							public String map(String internalName) {
-								if (internalName.contains("/"))
-									return internalName.replace("net/minecraft/src/", "net/minecraft/");
-								else {
-									return "net/minecraft/" + internalName;
-								}
+								if (RELOCATE_SRC == 0)
+									if (internalName.contains("/")) {
+										return internalName.replace("net/minecraft/src/", "net/minecraft/");
+									}
+									else {
+										return "net/minecraft/" + internalName;
+									}
+								else if (RELOCATE_SRC == 1)
+									if (!internalName.contains("/")) {
+										return "net/minecraft/src/" + internalName;
+									}
+								return internalName;
 							}
 						})
 						.build()
@@ -191,69 +199,6 @@ public final class Knot extends FabricLauncherBase {
 		Thread.currentThread().setContextClassLoader(cl);
 
 		loader.load();
-		for (ModContainer m : loader.mods) {
-			String[] tmp = m.getOriginUrl().toExternalForm().split("/");
-			if (!m.getInfo().getEntrypointKeys().isEmpty() && tmp[tmp.length-2].equals("mods")) {
-				String sidedOrigin = getEnvironmentType().name().toLowerCase(Locale.ENGLISH);
-				TinyRemapperWithOverwrites remapper = new TinyRemapperWithOverwrites(TinyRemapper.newRemapper()
-						.withMappings(TinyRemapperMappingsHelper.create(
-								getMappingConfiguration().getMappings(), getMappingConfiguration().getMappings().getMetadata().getNamespaces().contains(sidedOrigin)
-										? sidedOrigin : "official", getMappingConfiguration().getTargetNamespace())
-						)
-						.rebuildSourceFilenames(true)
-						.fixPackageAccess(!isDevelopment()).extraRemapper(new Remapper() {
-							/**
-							 * Maps the internal name of a class to its new name. The default implementation of this method
-							 * returns the given name, unchanged. Subclasses can override.
-							 *
-							 * @param internalName the internal name of a class.
-							 * @return the new internal name.
-							 */
-							@Override
-							public String map(String internalName) {
-								if (internalName.contains("/"))
-									return internalName.replace("net/minecraft/src/", "net/minecraft/");
-								else {
-									return "net/minecraft/" + internalName;
-								}
-							}
-						})
-						.build()
-				);
-				String versionedId = provider.getNormalizedGameVersion().isEmpty() ? provider.getGameId() : String.format("%s-%s", provider.getGameId(), provider.getNormalizedGameVersion());
-				Path jarPath = null;
-				try {
-					jarPath = provider.getLaunchDirectory().resolve(".fabric").resolve("remappedModJars").
-							resolve(versionedId).resolve(getMappingConfiguration().
-							getTargetNamespace() + "-" + UrlUtil.asPath(m.getOriginUrl()).getFileName());
-				} catch (UrlConversionException e) {
-					e.printStackTrace();
-				}
-				try (OutputConsumerPath o = new OutputConsumerPath.Builder(jarPath)
-						// force jar despite the .tmp extension
-						.assumeArchive(true)
-						// don't accept class names from a blacklist of dependencies that Fabric itself utilizes
-						// TODO: really could use a better solution, as always...
-						.filter(clsName -> !clsName.startsWith("com/google/common/")
-								&& !clsName.startsWith("com/google/gson/")
-								&& !clsName.startsWith("com/google/thirdparty/")
-								&& !clsName.startsWith("org/apache/logging/log4j/"))
-						.build()) {
-					remapper.readInputs(UrlUtil.asPath(m.getOriginUrl()));
-					remapper.INSTANCE.apply(o);
-				} catch (IOException | UrlConversionException e) {
-					throw new RuntimeException("Failed to remap '" + m.getOriginUrl() + "'!", e);
-				} finally {
-					remapper.INSTANCE.finish();
-				}
-				try {
-					propose(UrlUtil.asUrl(jarPath));
-				} catch (UrlConversionException e) {
-					e.printStackTrace();
-				}
-			}
-		}
-
 
 		loader.freeze();
 
