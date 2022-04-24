@@ -34,9 +34,7 @@ import net.fabricmc.tinyremapper.TinyRemapper;
 import org.objectweb.asm.commons.Remapper;
 import org.spongepowered.asm.launch.MixinBootstrap;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.URL;
 import java.nio.file.Path;
 import java.util.*;
@@ -112,12 +110,23 @@ public final class Knot extends FabricLauncherBase {
 
 		if (provider.isObfuscated()) {
 			for (Path path : provider.getGameContextJars()) {
+				PrintStream out = System.out;
+				// The Remapper lib partly uses System.out for debugging
+				if (!LOGGER.isDebugEnabled()) {
+					System.setOut(new PrintStream(new OutputStream() {
+						public void write(int b) {}
+					}));
+				}
 				FabricLauncherBase.deobfuscate(
 						provider.getGameId(), provider.getNormalizedGameVersion(),
 						provider.getLaunchDirectory(),
 						path,
 						this
 						);
+				// And lets restore it again
+				if (!LOGGER.isDebugEnabled()) {
+					System.setOut(out);
+				}
 			}
 		}
 

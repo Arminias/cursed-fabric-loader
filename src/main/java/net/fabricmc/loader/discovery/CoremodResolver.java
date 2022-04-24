@@ -178,7 +178,7 @@ public class CoremodResolver extends ModResolver {
 				// Optional (custom values)
 				Map<String, CustomValue> customValues = new HashMap<>();
 				info = new LoaderModMetadata[]{
-						new V1ModMetadata(path.getFileName().toString().replace(".", ""),
+						new V1ModMetadata("coremod" + path.getFileName().toString().replace(".jar", "").toLowerCase().replaceAll("[^a-z]", ""),
 								new StringVersion("1.0.0"), provides, environment, entrypoints, jars, mixins, accessWidener, depends, recommends, suggests, conflicts, breaks, requires, name, description, authors, contributors, contact, license, icon, languageAdapters, customValues)
 				};
 			} catch (IOException e) {

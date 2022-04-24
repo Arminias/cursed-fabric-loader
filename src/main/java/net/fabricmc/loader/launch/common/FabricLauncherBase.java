@@ -85,6 +85,7 @@ public abstract class FabricLauncherBase implements FabricLauncher {
 						TinyRemapper.class.getDeclaredField("dirty"),
 						TinyRemapper.class.getDeclaredField("readClasses"),
 						TinyRemapper.class.getDeclaredField("classesToMakePublic"),
+						TinyRemapper.class.getDeclaredField("membersToMakePublic"),
 						ClassInstance.class.getDeclaredField("isInput"),
 						ClassInstance.class.getDeclaredField("srcPath"),
 						ClassInstance.class.getDeclaredField("name"),
@@ -123,6 +124,17 @@ public abstract class FabricLauncherBase implements FabricLauncher {
 
 		public void readInputs(InputTag tag, Path... inputs) {
 			read(inputs, true, tag);
+		}
+
+		private static void makeMembersPublic(ClassInstance cls) {
+			try {
+				Set<MemberInstance> membersToMakePublic = (Set<MemberInstance>) ((Field) accessMap.get("field_membersToMakePublic")).get(INSTANCE);
+				for (MemberInstance member : cls.getMembers()) {
+					membersToMakePublic.add(member);
+				}
+			} catch (IllegalAccessException e) {
+				e.printStackTrace();
+			}
 		}
 
 		public List<ClassInstance> read(Path[] inputs, boolean isInput, InputTag tag) {
@@ -207,19 +219,29 @@ public abstract class FabricLauncherBase implements FabricLauncher {
 			for (;;) {
 				ClassInstance prev = out.putIfAbsent(name, cls);
 				ClassInstance prev_mapped = out.putIfAbsent(mapped_name, cls);
-				if (prev == null && prev_mapped == null) return;
+				if (prev == null && prev_mapped == null) {
+					((Set<ClassInstance>)classesToMakePublic.get(INSTANCE)).add(cls);
+					makeMembersPublic(cls);
+					return;
+				}
 				if (prev != null) {
 					if ((boolean) isInput.get(cls)) {
 						if ((boolean) isInput.get(prev)) {
-							System.out.printf("duplicate input class %s, from %s and %s%n", name, srcPath.get(prev), srcPath.get(cls));
+							//LOGGER.debug("duplicate input class %s, from %s and %s", name, srcPath.get(prev), srcPath.get(cls));
 							addInputTags.invoke(prev, getInputTags.invoke(cls));
+							((Set<ClassInstance>)classesToMakePublic.get(INSTANCE)).add(prev);
+							makeMembersPublic(prev);
 							return;
 						} else if (out.replace(name, prev, cls)) { // cas with retry-loop on failure
 							addInputTags.invoke(cls, getInputTags.invoke(prev));
+							((Set<ClassInstance>)classesToMakePublic.get(INSTANCE)).add(cls);
+							makeMembersPublic(cls);
 							return;
 						}
 					} else {
 						addInputTags.invoke(prev, getInputTags.invoke(cls));
+						((Set<ClassInstance>)classesToMakePublic.get(INSTANCE)).add(prev);
+						makeMembersPublic(prev);
 						return;
 					}
 				}
@@ -228,13 +250,18 @@ public abstract class FabricLauncherBase implements FabricLauncher {
 						if ((boolean) isInput.get(prev_mapped)) {
 							addInputTags.invoke(prev_mapped, getInputTags.invoke(cls));
 							((Set<ClassInstance>)classesToMakePublic.get(INSTANCE)).add(prev_mapped);
+							makeMembersPublic(prev_mapped);
 							return;
 						} else if (out.replace(name, prev_mapped, cls)) { // cas with retry-loop on failure
 							addInputTags.invoke(cls, getInputTags.invoke(prev_mapped));
+							((Set<ClassInstance>)classesToMakePublic.get(INSTANCE)).add(cls);
+							makeMembersPublic(cls);
 							return;
 						}
 					} else {
 						addInputTags.invoke(prev_mapped, getInputTags.invoke(cls));
+						((Set<ClassInstance>)classesToMakePublic.get(INSTANCE)).add(prev_mapped);
+						makeMembersPublic(prev_mapped);
 						return;
 					}
 				}

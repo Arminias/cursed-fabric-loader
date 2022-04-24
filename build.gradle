@@ -14,7 +14,7 @@ task wrapper(type: Wrapper) {
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
-archivesBaseName = "cursed-fabric-loader"
+archivesBaseName = "cursed-fabric-loader-btw"
 
 // Fetch build number from Jenkins
 def ENV = System.getenv()
